@@ -54,6 +54,42 @@ function startJob(command, cwd) {
   if (jobs.size > 20) for (const [key, val] of jobs) { if (!val.running && key !== id) { jobs.delete(key); break; } }
   return { id };
 }
+
+function startCodex(prompt, cwd, sessionId) {
+  if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000) throw new Error('invalid_prompt');
+  if (sessionId !== undefined && (typeof sessionId !== 'string' || !/^[0-9a-fA-F-]{36}$/.test(sessionId))) throw new Error('invalid_session');
+  if ([...jobs.values()].some(j => j.running && j.codex)) throw new Error('codex_busy');
+  const id = String(++nextJob);
+  const args = sessionId ? ['exec', '--json', 'resume', sessionId, prompt] : ['exec', '--json', prompt];
+  const child = spawn('codex', args, { cwd, env: { ...process.env, TERM: 'dumb' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const job = { id, output: '', running: true, exitCode: null, child, codex: true, sessionId: sessionId || null, events: [], buffer: '' };
+  jobs.set(id, job);
+  child.stdout.on('data', chunk => {
+    job.buffer += chunk.toString('utf8');
+    const lines = job.buffer.split('\\n');
+    job.buffer = lines.pop() || '';
+    for (const line of lines) {
+      try {
+        const event = JSON.parse(line);
+        if (event.type === 'thread.started' && typeof event.thread_id === 'string') job.sessionId = event.thread_id;
+        if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') job.output += event.item.text + '\\n';
+        if (event.type === 'item.started' || event.type === 'item.completed') {
+          const item = event.item || {};
+          if (item.type === 'command_execution') job.output += '[' + event.type + '] ' + (item.command || 'command') + '\\n';
+        }
+        if (event.type === 'turn.failed') job.output += '[Codex turn failed]\\n';
+        job.events.push({ type: event.type, itemType: event.item?.type || null });
+        if (job.events.length > 100) job.events.shift();
+        job.output = job.output.slice(-MAX_OUTPUT);
+      } catch { /* Ignore malformed output lines, never treat as commands. */ }
+    }
+  });
+  child.stderr.on('data', chunk => { job.output = (job.output + chunk.toString('utf8')).slice(-MAX_OUTPUT); });
+  child.on('error', error => { job.output += error.message; job.running = false; job.exitCode = -1; });
+  child.on('close', code => { job.running = false; job.exitCode = code; });
+  return { id, sessionId: job.sessionId };
+}
+
 export function createBridgeServer() {
   return http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -82,6 +118,10 @@ export function createBridgeServer() {
         await writeFile(file, data.content, { flag: 'w' });
         return send(200, { saved: true });
       }
+      if (req.method === 'POST' && url.pathname === '/v1/codex') {
+        const data = await body(req);
+        return send(202, startCodex(data.prompt, await resolveInside(data.cwd || '.'), data.sessionId));
+      }
       if (req.method === 'POST' && url.pathname === '/v1/jobs') {
         const data = await body(req);
         return send(202, startJob(data.command, await resolveInside(data.cwd || '.')));
@@ -91,7 +131,7 @@ export function createBridgeServer() {
         const job = jobs.get(match[1]);
         if (!job) return send(404, { error: 'not_found' });
         if (req.method === 'DELETE') { if (job.running) job.child.kill('SIGTERM'); return send(200, { cancelled: true }); }
-        if (req.method === 'GET') return send(200, { id: job.id, output: job.output, running: job.running, exitCode: job.exitCode });
+        if (req.method === 'GET') return send(200, { id: job.id, output: job.output, running: job.running, exitCode: job.exitCode, sessionId: job.sessionId || null, events: job.events || [] });
       }
       return send(404, { error: 'not_found' });
     } catch (error) {
