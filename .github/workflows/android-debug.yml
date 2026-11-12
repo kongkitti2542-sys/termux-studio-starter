@@ -1,7 +1,7 @@
 name: Android Debug APK
 on:
   push:
-    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui, feature/gate2-local-bridge, feature/functional-mvp, feature/codex-chat]
+    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui, feature/gate2-local-bridge, feature/functional-mvp, feature/codex-chat, feature/codex-session-streaming]
   pull_request:
     branches: [main]
   workflow_dispatch:
