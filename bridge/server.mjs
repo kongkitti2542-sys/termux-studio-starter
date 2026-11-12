@@ -66,16 +66,16 @@ function startCodex(prompt, cwd, sessionId) {
   jobs.set(id, job);
   child.stdout.on('data', chunk => {
     job.buffer += chunk.toString('utf8');
-    const lines = job.buffer.split('\\n');
+    const lines = job.buffer.split('\n');
     job.buffer = lines.pop() || '';
     for (const line of lines) {
       try {
         const event = JSON.parse(line);
         if (event.type === 'thread.started' && typeof event.thread_id === 'string') job.sessionId = event.thread_id;
-        if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') job.output += event.item.text + '\\n';
+        if (event.type === 'item.completed' && event.item?.type === 'agent_message' && typeof event.item.text === 'string') job.output += event.item.text + '\n';
         if (event.type === 'item.started' || event.type === 'item.completed') {
           const item = event.item || {};
-          if (item.type === 'command_execution') job.output += '[' + event.type + '] ' + (item.command || 'command') + '\\n';
+          if (item.type === 'command_execution') job.output += '[' + event.type + '] ' + (item.command || 'command') + '\n';
         }
         if (event.type === 'turn.failed') job.output += '[Codex turn failed]\\n';
         job.events.push({ type: event.type, itemType: event.item?.type || null });
