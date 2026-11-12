@@ -1,7 +1,7 @@
 name: Android Debug APK
 on:
   push:
-    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui]
+    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui, feature/gate2-local-bridge]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -23,6 +23,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+      - name: Test Termux local bridge
+        env:
+          TERMUX_STUDIO_TOKEN: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        run: node --test bridge/server.test.mjs
       - name: Build debug APK
         run: gradle --no-daemon :app:assembleDebug
       - name: Audit APK signing and manifest
