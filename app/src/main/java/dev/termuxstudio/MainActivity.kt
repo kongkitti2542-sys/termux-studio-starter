@@ -141,6 +141,8 @@ private fun Studio(activity: ComponentActivity) {
                         Text("Codex CLI in Termux · resumes this chat by session ID", color = Color.LightGray, fontSize = 12.sp)
                         Text("Session: " + codexSessionId.ifEmpty { "New" }, color = Color.LightGray, fontSize = 11.sp)
                         Text(codexActivity, color = accent, fontSize = 11.sp)
+                        OutlinedTextField(value = folder, onValueChange = { folder = it }, label = { Text("Codex project folder (relative to Termux home)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Text("Select a trusted Git repository before sending.", color = Color.LightGray, fontSize = 11.sp)
                         TextButton(onClick = { codexSessionId = ""; codexConversation = ""; codexActivity = "" }, enabled = !codexBusy) { Text("New chat") }
                         Text(codexConversation.ifEmpty { "Send your first message to Codex." }, color = Color(0xFFD5E2D8), fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().background(Color(0xFF090C11), RoundedCornerShape(10.dp)).padding(14.dp))
                         OutlinedTextField(value = codexPrompt, onValueChange = { codexPrompt = it }, label = { Text("Message Codex") }, modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp))
@@ -150,7 +152,7 @@ private fun Studio(activity: ComponentActivity) {
                                 if (prompt.isNotEmpty()) {
                                     codexPrompt = ""
                                     codexBusy = true
-                                    codexConversation += "\\n\\nYou: " + prompt + "\\nCodex: "
+                                    codexConversation += "\n\nYou: " + prompt + "\nCodex: "
                                     val prefix = codexConversation
                                     runTask {
                                         try {
