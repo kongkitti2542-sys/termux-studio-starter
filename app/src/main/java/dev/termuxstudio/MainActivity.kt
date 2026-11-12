@@ -67,6 +67,10 @@ private fun Studio(activity: ComponentActivity) {
     var jobId by remember { mutableStateOf("") }
     var running by remember { mutableStateOf(false) }
     var confirmCommand by remember { mutableStateOf(false) }
+    var codexPrompt by remember { mutableStateOf("") }
+    var codexConversation by remember { mutableStateOf("") }
+    var codexBusy by remember { mutableStateOf(false) }
+    var codexJob by remember { mutableStateOf("") }
     val bridge = remember(token) { Bridge(token) }
     fun runTask(action: () -> Unit) {
         Thread {
@@ -129,7 +133,48 @@ private fun Studio(activity: ComponentActivity) {
                             Button(onClick = { runTask { bridge.call("PUT", "/v1/file", JSONObject().put("path", file).put("content", content)); status = "Saved $file" } }, enabled = connected) { Text("Save file") }
                         }
                     }
-                    "Terminal", "Git", "AI" -> {
+                    "AI" -> {
+                        Text("Codex Chat", color = Color.White, fontSize = 20.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("Uses your existing Codex CLI login. Each message starts a separate non-interactive job.", color = Color.LightGray, fontSize = 12.sp)
+                        Text(codexConversation.ifEmpty { "Send your first message to Codex." }, color = Color(0xFFD5E2D8), fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().background(Color(0xFF090C11), RoundedCornerShape(10.dp)).padding(14.dp))
+                        OutlinedTextField(value = codexPrompt, onValueChange = { codexPrompt = it }, label = { Text("Message Codex") }, modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp))
+                        Row {
+                            Button(onClick = {
+                                val prompt = codexPrompt.trim()
+                                if (prompt.isNotEmpty()) {
+                                    codexPrompt = ""
+                                    codexBusy = true
+                                    codexConversation += "\\n\\nYou: " + prompt + "\\nCodex: "
+                                    val prefix = codexConversation
+                                    val quote = 39.toChar().toString()
+                                    val escaped = quote + prompt.replace(quote, quote + "\\\""+ quote + "\\\"" + quote) + quote
+                                    runTask {
+                                        try {
+                                            val response = bridge.call("POST", "/v1/jobs", JSONObject().put("command", "codex exec " + escaped).put("cwd", folder))
+                                            codexJob = response.getString("id")
+                                            while (true) {
+                                                val job = bridge.call("GET", "/v1/jobs/" + codexJob)
+                                                codexConversation = prefix + job.optString("output")
+                                                if (!job.optBoolean("running")) {
+                                                    codexBusy = false
+                                                    status = "Codex exit: " + job.optString("exitCode")
+                                                    break
+                                                }
+                                                Thread.sleep(650)
+                                            }
+                                        } catch (e: Exception) {
+                                            codexBusy = false
+                                            status = e.message ?: "Codex failed"
+                                        }
+                                    }
+                                }
+                            }, enabled = connected && !codexBusy && codexPrompt.isNotBlank()) { Text(if (codexBusy) "Working..." else "Send to Codex") }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = { runTask { bridge.call("DELETE", "/v1/jobs/" + codexJob) } }, enabled = codexBusy && codexJob.isNotEmpty()) { Text("Stop") }
+                        }
+                    }
+                    "Terminal", "Git" -> {
                         Text(when(tab) { "Git" -> "Git commands"; "AI" -> "Codex CLI"; else -> "Shell commands" }, color = Color.White, fontSize = 20.sp)
                         Spacer(Modifier.height(8.dp))
                         Text("One command per job; not a full PTY. Commands execute in Termux after confirmation.", color = Color.LightGray, fontSize = 12.sp)
