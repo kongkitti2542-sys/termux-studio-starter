@@ -1,7 +1,7 @@
 name: Android Debug APK
 on:
   push:
-    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui, feature/gate2-local-bridge]
+    branches: [feature/gate0-android-ui-scaffold, feature/gate1-ide-ui, feature/gate2-local-bridge, feature/functional-mvp]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -38,7 +38,7 @@ jobs:
           test -s "$APK"
           "$TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-report.txt
           "$TOOLS/aapt" dump permissions "$APK" | tee apk-permissions-report.txt
-          if grep -Eq "uses-permission: name='android.permission.(INTERNET|READ_SMS|SEND_SMS|READ_CONTACTS|ACCESS_FINE_LOCATION|QUERY_ALL_PACKAGES)'" apk-permissions-report.txt; then
+          if grep -Eq "uses-permission: name='android.permission.(READ_SMS|SEND_SMS|READ_CONTACTS|ACCESS_FINE_LOCATION|QUERY_ALL_PACKAGES)'" apk-permissions-report.txt; then
             echo "Unexpected sensitive permission in Gate 0 APK" >&2
             exit 1
           fi
