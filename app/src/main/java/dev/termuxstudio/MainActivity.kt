@@ -3,149 +3,171 @@ package dev.termuxstudio
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 private val bg = Color(0xFF101116)
-private val panel = Color(0xFF1D1F2A)
+private val panel = Color(0xFF20212D)
 private val accent = Color(0xFF967BFF)
-private val white = Color(0xFFF1EFFA)
-private val muted = Color(0xFFADB0C2)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { StudioApp() }
+        setContent { Studio(this) }
+    }
+}
+
+private class Bridge(private val token: String) {
+    fun call(method: String, route: String, data: JSONObject? = null): JSONObject {
+        val conn = URL("http://127.0.0.1:8765" + route).openConnection() as HttpURLConnection
+        try {
+            conn.requestMethod = method
+            conn.connectTimeout = 4000
+            conn.readTimeout = 6000
+            conn.setRequestProperty("Authorization", "Bearer " + token)
+            conn.setRequestProperty("Content-Type", "application/json")
+            if (data != null) {
+                conn.doOutput = true
+                conn.outputStream.use { it.write(data.toString().toByteArray(Charsets.UTF_8)) }
+            }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val result = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            if (conn.responseCode !in 200..299) throw IllegalStateException("HTTP " + conn.responseCode + ": " + result)
+            return JSONObject(result)
+        } finally { conn.disconnect() }
     }
 }
 
 @Composable
-private fun StudioApp() {
+private fun Studio(activity: ComponentActivity) {
+    val prefs = remember { activity.getSharedPreferences("bridge", 0) }
+    var token by remember { mutableStateOf(prefs.getString("token", "") ?: "") }
+    var connected by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf("Home") }
-    val tabs = listOf("Home", "Files", "Terminal", "Git", "AI")
-    MaterialTheme(colorScheme = darkColorScheme(primary = accent, background = bg, surface = panel, onSurface = white)) {
+    var status by remember { mutableStateOf("Bridge not connected") }
+    var folder by remember { mutableStateOf(".") }
+    var file by remember { mutableStateOf("") }
+    var content by remember { mutableStateOf("") }
+    var entries by remember { mutableStateOf(listOf<Pair<String, Boolean>>()) }
+    var command by remember { mutableStateOf("") }
+    var output by remember { mutableStateOf("") }
+    var jobId by remember { mutableStateOf("") }
+    var running by remember { mutableStateOf(false) }
+    var confirmCommand by remember { mutableStateOf(false) }
+    val bridge = remember(token) { Bridge(token) }
+    fun runTask(action: () -> Unit) {
+        Thread {
+            try { action() } catch (e: Exception) { status = e.message ?: "Connection failed"; connected = false }
+        }.start()
+    }
+    fun refreshFiles() = runTask {
+        val json = bridge.call("GET", "/v1/files?path=" + java.net.URLEncoder.encode(folder, "UTF-8"))
+        val arr = json.getJSONArray("entries")
+        entries = (0 until arr.length()).map {
+            val item = arr.getJSONObject(it)
+            item.getString("name") to item.getBoolean("directory")
+        }
+    }
+    fun pollJob(id: String) = runTask {
+        while (true) {
+            val data = bridge.call("GET", "/v1/jobs/" + id)
+            output = data.optString("output")
+            running = data.optBoolean("running")
+            if (!running) { status = "Exit: " + data.optString("exitCode"); break }
+            Thread.sleep(600)
+        }
+    }
+    MaterialTheme(colorScheme = darkColorScheme(primary = accent, background = bg, surface = panel)) {
         Column(Modifier.fillMaxSize().background(bg).windowInsetsPadding(WindowInsets.safeDrawing)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("〉_", color = accent, fontSize = 26.sp, fontFamily = FontFamily.Monospace)
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text("Termux Studio", color = white, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                    Text("IDE for Termux + Codex", color = muted, fontSize = 12.sp)
-                }
-            }
-            HorizontalDivider(color = Color(0xFF30313E))
-            Column(Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
+            Text("〉_  Termux Studio", color = Color.White, fontSize = 23.sp, modifier = Modifier.padding(16.dp))
+            Text(if (connected) "● Bridge connected" else "○ Bridge offline", color = if (connected) Color(0xFF8DDBAA) else Color.LightGray, modifier = Modifier.padding(horizontal = 16.dp))
+            HorizontalDivider(Modifier.padding(top = 12.dp))
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
                 when (tab) {
                     "Home" -> {
-                        SectionTitle("Workspace")
-                        Text("Your mobile development environment", color = muted, fontSize = 13.sp)
-                        Spacer(Modifier.height(18.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DashboardTile("〉_", "Terminal", "Shell sessions", Modifier.weight(1f)) { tab = "Terminal" }
-                            DashboardTile("</>", "Editor", "Source files", Modifier.weight(1f)) { tab = "Files" }
-                        }
+                        Text("Local bridge pairing", color = Color.White, fontSize = 20.sp)
                         Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DashboardTile("✦", "Codex CLI", "Coding agent", Modifier.weight(1f)) { tab = "AI" }
-                            DashboardTile("⑂", "Git", "Version control", Modifier.weight(1f)) { tab = "Git" }
-                        }
-                        Spacer(Modifier.height(26.dp))
-                        SectionTitle("Recent projects")
-                        InfoPanel("No projects connected", "A secure Termux bridge is required to browse your existing projects.")
+                        OutlinedTextField(value = token, onValueChange = { token = it }, label = { Text("Paste bridge token") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        Spacer(Modifier.height(8.dp))
+                        Button(onClick = {
+                            prefs.edit().putString("token", token).apply()
+                            runTask { bridge.call("GET", "/v1/health"); connected = true; status = "Bridge ready" }
+                        }, enabled = token.length >= 32) { Text("Connect") }
+                        Spacer(Modifier.height(16.dp))
+                        Text("Run the bridge in Termux first. Keep the pairing token private.", color = Color.LightGray)
                     }
                     "Files" -> {
-                        SectionTitle("Explorer")
-                        InfoPanel("No workspace open", "Termux file access is not configured. This screen does not read private app files.")
-                        Spacer(Modifier.height(14.dp))
-                        SectionTitle("Editor")
-                        Surface(color = panel, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text("No file selected", color = white, fontFamily = FontFamily.Monospace)
-                                Spacer(Modifier.height(10.dp))
-                                Text("File tree, tabs and editing will activate after the approved file bridge is implemented.", color = muted, fontSize = 13.sp)
-                            }
+                        Text("Explorer", color = Color.White, fontSize = 20.sp)
+                        OutlinedTextField(value = folder, onValueChange = { folder = it }, label = { Text("Workspace folder (relative to Termux home)") }, modifier = Modifier.fillMaxWidth())
+                        Button(onClick = { refreshFiles() }, enabled = connected) { Text("Browse") }
+                        entries.forEach { (name, directory) ->
+                            TextButton(onClick = {
+                                val target = if (folder == ".") name else "$folder/$name"
+                                if (directory) { folder = target; refreshFiles() }
+                                else runTask {
+                                    content = bridge.call("GET", "/v1/file?path=" + java.net.URLEncoder.encode(target, "UTF-8")).getString("content")
+                                    file = target
+                                }
+                            }) { Text((if (directory) "▸ " else "  ") + name) }
+                        }
+                        if (file.isNotEmpty()) {
+                            Text("Editing: $file", color = Color.White)
+                            OutlinedTextField(value = content, onValueChange = { content = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp))
+                            Button(onClick = { runTask { bridge.call("PUT", "/v1/file", JSONObject().put("path", file).put("content", content)); status = "Saved $file" } }, enabled = connected) { Text("Save file") }
                         }
                     }
-                    "Terminal" -> {
-                        SectionTitle("Terminal")
-                        Surface(color = Color(0xFF0A0D12), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().weight(1f)) {
-                            Column(Modifier.padding(16.dp)) {
-                                Text("TERMUX STUDIO • SESSION OFFLINE", color = accent, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
-                                Spacer(Modifier.height(18.dp))
-                                Text("$ connection pending", color = white, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-                                Spacer(Modifier.height(8.dp))
-                                Text("No shell is running. Commands cannot be executed until the local Termux transport passes security review.", color = muted, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                            }
+                    "Terminal", "Git", "AI" -> {
+                        Text(when(tab) { "Git" -> "Git commands"; "AI" -> "Codex CLI"; else -> "Shell commands" }, color = Color.White, fontSize = 20.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text("One command per job; not a full PTY. Commands execute in Termux after confirmation.", color = Color.LightGray, fontSize = 12.sp)
+                        OutlinedTextField(value = command, onValueChange = { command = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Command") }, textStyle = androidx.compose.ui.text.TextStyle(fontFamily = FontFamily.Monospace))
+                        Row {
+                            Button(onClick = { confirmCommand = true }, enabled = connected && command.isNotBlank() && !running) { Text("Run") }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(onClick = { runTask { bridge.call("DELETE", "/v1/jobs/" + jobId); status = "Cancellation requested" } }, enabled = running && jobId.isNotEmpty()) { Text("Stop") }
                         }
-                    }
-                    "Git" -> {
-                        SectionTitle("Source control")
-                        InfoPanel("No repository selected", "Git operations require a connected project. No commands have been executed.")
-                        Spacer(Modifier.height(14.dp))
-                        SectionTitle("Changes")
-                        InfoPanel("Working tree unavailable", "Diff, staging, commit and push will require explicit user actions.")
-                    }
-                    "AI" -> {
-                        SectionTitle("Codex CLI")
-                        InfoPanel("Agent disconnected", "Codex will run through an authorized Termux session. This app does not read ChatGPT tokens.")
-                        Spacer(Modifier.height(14.dp))
-                        SectionTitle("Session")
-                        InfoPanel("No active session", "Login remains under the official Codex CLI authentication flow.")
+                        Spacer(Modifier.height(12.dp))
+                        Text(output.ifEmpty { "No output yet" }, color = Color(0xFFD5E2D8), fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().background(Color(0xFF090C11), RoundedCornerShape(10.dp)).padding(14.dp))
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                Text(status, color = Color.LightGray, fontSize = 12.sp)
             }
             NavigationBar(containerColor = panel) {
-                tabs.forEach { item ->
-                    NavigationBarItem(
-                        selected = tab == item,
-                        onClick = { tab = item },
-                        icon = { Text(when (item) { "Home" -> "⌂"; "Files" -> "▣"; "Terminal" -> ">_"; "Git" -> "⑂"; else -> "✦" }, color = if (tab == item) accent else muted, fontSize = 18.sp) },
-                        label = { Text(item, fontSize = 11.sp) }
-                    )
+                listOf("Home", "Files", "Terminal", "Git", "AI").forEach { item ->
+                    NavigationBarItem(selected = tab == item, onClick = { tab = item }, icon = { Text(when(item) { "Home" -> "⌂"; "Files" -> "▣"; "Terminal" -> ">_"; "Git" -> "⑂"; else -> "✦" }) }, label = { Text(item, fontSize = 10.sp) })
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SectionTitle(value: String) {
-    Text(value, color = white, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
-    Spacer(Modifier.height(10.dp))
-}
-
-@Composable
-private fun DashboardTile(symbol: String, title: String, subtitle: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(onClick = onClick, modifier = modifier.height(132.dp), color = panel, shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Text(symbol, color = accent, fontSize = 27.sp, fontFamily = FontFamily.Monospace)
-            Column {
-                Text(title, color = white, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text(subtitle, color = muted, fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun InfoPanel(title: String, body: String) {
-    Surface(color = panel, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, color = white, fontWeight = FontWeight.Medium)
-            Spacer(Modifier.height(7.dp))
-            Text(body, color = muted, fontSize = 13.sp)
-        }
+        if (confirmCommand) AlertDialog(
+            onDismissRequest = { confirmCommand = false },
+            title = { Text("Execute in Termux?") },
+            text = { Text(command) },
+            confirmButton = { TextButton(onClick = {
+                confirmCommand = false
+                val submitted = command
+                runTask {
+                    val response = bridge.call("POST", "/v1/jobs", JSONObject().put("command", submitted).put("cwd", folder))
+                    jobId = response.getString("id")
+                    running = true
+                    output = ""
+                    pollJob(jobId)
+                }
+            }) { Text("Execute") } },
+            dismissButton = { TextButton(onClick = { confirmCommand = false }) { Text("Cancel") } }
+        )
     }
 }
