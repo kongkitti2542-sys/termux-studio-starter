@@ -71,6 +71,8 @@ private fun Studio(activity: ComponentActivity) {
     var codexConversation by remember { mutableStateOf("") }
     var codexBusy by remember { mutableStateOf(false) }
     var codexJob by remember { mutableStateOf("") }
+    var codexSessionId by remember { mutableStateOf("") }
+    var codexActivity by remember { mutableStateOf("") }
     val bridge = remember(token) { Bridge(token) }
     fun runTask(action: () -> Unit) {
         Thread {
@@ -136,7 +138,10 @@ private fun Studio(activity: ComponentActivity) {
                     "AI" -> {
                         Text("Codex Chat", color = Color.White, fontSize = 20.sp)
                         Spacer(Modifier.height(8.dp))
-                        Text("Uses your existing Codex CLI login. Each message starts a separate non-interactive job.", color = Color.LightGray, fontSize = 12.sp)
+                        Text("Codex CLI in Termux · resumes this chat by session ID", color = Color.LightGray, fontSize = 12.sp)
+                        Text("Session: " + codexSessionId.ifEmpty { "New" }, color = Color.LightGray, fontSize = 11.sp)
+                        Text(codexActivity, color = accent, fontSize = 11.sp)
+                        TextButton(onClick = { codexSessionId = ""; codexConversation = ""; codexActivity = "" }, enabled = !codexBusy) { Text("New chat") }
                         Text(codexConversation.ifEmpty { "Send your first message to Codex." }, color = Color(0xFFD5E2D8), fontFamily = FontFamily.Monospace, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().background(Color(0xFF090C11), RoundedCornerShape(10.dp)).padding(14.dp))
                         OutlinedTextField(value = codexPrompt, onValueChange = { codexPrompt = it }, label = { Text("Message Codex") }, modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp))
                         Row {
@@ -147,15 +152,19 @@ private fun Studio(activity: ComponentActivity) {
                                     codexBusy = true
                                     codexConversation += "\\n\\nYou: " + prompt + "\\nCodex: "
                                     val prefix = codexConversation
-                                    val quote = 39.toChar().toString()
-                                    val escaped = quote + prompt.replace(quote, quote + 92.toChar() + quote + quote) + quote
                                     runTask {
                                         try {
-                                            val response = bridge.call("POST", "/v1/jobs", JSONObject().put("command", "codex exec " + escaped).put("cwd", folder))
+                                            val request = JSONObject().put("prompt", prompt).put("cwd", folder)
+                                            if (codexSessionId.isNotEmpty()) request.put("sessionId", codexSessionId)
+                                            val response = bridge.call("POST", "/v1/codex", request)
                                             codexJob = response.getString("id")
                                             while (true) {
                                                 val job = bridge.call("GET", "/v1/jobs/" + codexJob)
                                                 codexConversation = prefix + job.optString("output")
+                                                val session = job.optString("sessionId")
+                                                if (session.isNotBlank() && session != "null") codexSessionId = session
+                                                val events = job.optJSONArray("events")
+                                                if (events != null && events.length() > 0) codexActivity = "Latest: " + events.getJSONObject(events.length() - 1).optString("type")
                                                 if (!job.optBoolean("running")) {
                                                     codexBusy = false
                                                     status = "Codex exit: " + job.optString("exitCode")
