@@ -148,7 +148,7 @@ private fun Studio(activity: ComponentActivity) {
                                     codexConversation += "\\n\\nYou: " + prompt + "\\nCodex: "
                                     val prefix = codexConversation
                                     val quote = 39.toChar().toString()
-                                    val escaped = quote + prompt.replace(quote, quote + "\\\""+ quote + "\\\"" + quote) + quote
+                                    val escaped = quote + prompt.replace(quote, quote + "\\\\" + quote + quote) + quote
                                     runTask {
                                         try {
                                             val response = bridge.call("POST", "/v1/jobs", JSONObject().put("command", "codex exec " + escaped).put("cwd", folder))
